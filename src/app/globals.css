@@ -1,0 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #ffffff;
+  --foreground: #000000;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  /* Same face jsPDF uses for the exported PDF */
+  font-family: Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* thin, unobtrusive scrollbars for the detail drawer + table */
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---- PDF-style sheet: values copied from exportPdf / jspdf-autotable ---- */
+.pdf-sheet {
+  padding: 0 24pt 24pt; /* autotable margin left/right */
+}
+.pdf-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6pt;
+  padding: 10pt 0;
+  font-size: 9pt;
+}
+.pdf-controls input,
+.pdf-controls select,
+.pdf-controls button {
+  font: inherit;
+  border: 1px solid rgb(200, 200, 200);
+  border-radius: 2pt;
+  padding: 3pt 6pt;
+  background: #fff;
+}
+.pdf-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pdf-controls button.primary {
+  background: rgb(37, 99, 235);
+  border-color: rgb(37, 99, 235);
+  color: #fff;
+}
+.pdf-muted {
+  color: rgb(110, 110, 110);
+}
+.pdf-title {
+  font-size: 13pt; /* doc.setFontSize(13) */
+  font-weight: normal;
+  color: #000;
+  margin: 8pt 0 0 16pt; /* title sits at x=40pt, table at 24pt */
+}
+.pdf-subtitle {
+  font-size: 9pt; /* doc.setFontSize(9) */
+  color: rgb(110, 110, 110); /* setTextColor(110) */
+  margin: 3pt 0 10pt 16pt;
+}
+.pdf-error {
+  font-size: 9pt;
+  color: rgb(185, 28, 28);
+  margin: 0 0 10pt 16pt;
+}
+.pdf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 6.5pt; /* styles.fontSize */
+  line-height: 1.15; /* jsPDF lineHeightFactor */
+  color: rgb(20, 20, 20); /* autotable default textColor */
+}
+.pdf-table th,
+.pdf-table td {
+  padding: 2pt; /* cellPadding */
+  text-align: left;
+  vertical-align: top;
+}
+.pdf-table th {
+  background: rgb(37, 99, 235); /* headStyles.fillColor */
+  color: #fff;
+  font-weight: bold;
+}
+.pdf-table th:first-child,
+.pdf-table td:first-child {
+  width: 18pt; /* columnStyles[0].cellWidth */
+}
+.pdf-table tbody tr:nth-child(odd) {
+  background: rgb(244, 247, 251); /* alternateRowStyles */
+}
+.pdf-table tbody tr {
+  cursor: pointer;
+}
+.pdf-table tbody tr:hover {
+  background: rgb(219, 234, 254);
+}
+/* keep IDs on one line like the PDF (browsers would break them at hyphens) */
+.pdf-table td:nth-child(7),
+.pdf-table td:nth-child(11),
+.pdf-table td:nth-child(13) {
+  white-space: nowrap;
+}
+.pdf-progress {
+  width: 90pt;
+  height: 6pt;
+  accent-color: rgb(37, 99, 235);
+}
+.pdf-link {
+  font: inherit;
+  color: rgb(37, 99, 235);
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.pdf-failed {
+  color: rgb(185, 28, 28);
+}
