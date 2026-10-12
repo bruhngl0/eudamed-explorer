@@ -8,6 +8,10 @@ export async function GET(
   { params }: { params: Promise<{ uuid: string }> },
 ) {
   const { uuid } = await params;
+  // Only real EUDAMED ids go into the upstream URL.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid)) {
+    return NextResponse.json({ error: "Invalid device id" }, { status: 400 });
+  }
   try {
     const data = await detail(uuid);
     return NextResponse.json(data);

@@ -1,7 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { exportXlsx, exportPdf, HEADERS, toCells } from "@/lib/exporters";
+import {
+  Overview,
+  FACET_LABELS,
+  matchesFacets,
+  type FacetKey,
+  type Facets,
+} from "@/components/Overview";
+import { DeviceSheet } from "@/components/DeviceSheet";
 
 interface Row {
   uuid: string;
@@ -22,17 +30,17 @@ interface Row {
   detail?: "pending" | "done" | "failed";
 }
 
-interface ApiResult {
+// Result of a detail lookup for one device (see /api/enrich).
+type Detail = Record<string, any> & { failed?: boolean };
+
+interface ListState {
   rows: Row[];
-  totalElements: number;
-  totalPages: number;
-  page: number;
-  pageSize: number;
+  total: number;
+  loading: boolean; // more pages still coming
 }
 
 interface ExportProgress {
   kind: "xlsx" | "pdf";
-  phase: "list" | "details";
   done: number;
   total: number;
 }
@@ -42,23 +50,28 @@ const STATUSES = [
   { value: "refdata.device-model-status.not-marketed", label: "No longer on market" },
   { value: "all", label: "All statuses" },
 ];
+const DEFAULT_CODE = "W0105090601";
 
 // Table columns (toCells order) that come from the detail lookups.
-const DETAIL_COLS = new Set([2, 3, 9, 11, 13]);
-
+const DETAIL_COLS = new Set([2, 3, 11, 13]);
+const PAGE_SIZE = 25;
+const LIST_PAGE = 100; // EUDAMED list page size; ~20-40s each
+const LIST_CAP = 1000; // stop loading the list beyond this many devices
 // EUDAMED allows ~20 requests a minute, so details trickle in; asking for a
 // few devices per request lets each batch show up as soon as it is ready.
 const PAGE_BATCH = 3;
 const EXPORT_BATCH = 5;
 
-function applyDetail(r: Row, e: any): Row {
+function applyDetail(r: Row, e: Detail | undefined, pending: boolean): Row {
+  if (!e) return pending ? { ...r, detail: "pending" } : r;
   return {
     ...r,
-    deviceName: r.deviceName ?? e.deviceName,
-    deviceModel: r.deviceModel ?? e.deviceModel,
-    criterion: r.criterion ?? e.deviceCriterion,
-    authorisedRepresentativeCountry: e.authorisedRepresentativeCountry,
-    additionalDescription: e.additionalDescription,
+    deviceName: r.deviceName ?? e.deviceName ?? null,
+    deviceModel: r.deviceModel ?? e.deviceModel ?? null,
+    criterion: r.criterion ?? e.deviceCriterion ?? null,
+    authorisedRepresentativeCountry:
+      e.authorisedRepresentativeCountry ?? r.authorisedRepresentativeCountry,
+    additionalDescription: e.additionalDescription ?? null,
     detail: e.failed ? "failed" : "done",
   };
 }
@@ -68,12 +81,12 @@ function applyDetail(r: Row, e: any): Row {
 async function fetchDetails(
   rows: Row[],
   batch: number,
-  onBatch: (map: Record<string, any>) => void,
+  onBatch: (map: Record<string, Detail>) => void,
   cancelled: () => boolean,
 ) {
   for (let i = 0; i < rows.length && !cancelled(); i += batch) {
     const slice = rows.slice(i, i + batch);
-    let map: Record<string, any>;
+    let map: Record<string, Detail>;
     try {
       const res = await fetch("/api/enrich", {
         method: "POST",
@@ -92,168 +105,257 @@ async function fetchDetails(
   }
 }
 
+// Shareable links: code, status and chart filters live in the URL.
+function readUrl() {
+  const sp = new URLSearchParams(window.location.search);
+  const facets: Facets = {};
+  for (const k of Object.keys(FACET_LABELS) as FacetKey[]) {
+    const v = sp.get(k);
+    if (v) facets[k] = v;
+  }
+  return {
+    code: sp.get("code")?.trim() || null,
+    status: STATUSES.some((s) => s.value === sp.get("status")) ? sp.get("status")! : null,
+    facets,
+  };
+}
+
+function writeUrl(code: string, status: string, facets: Facets) {
+  const sp = new URLSearchParams({ code });
+  if (status !== STATUSES[0].value) sp.set("status", status);
+  for (const [k, v] of Object.entries(facets)) if (v) sp.set(k, v);
+  window.history.replaceState(null, "", `?${sp}`);
+}
+
 export default function Home() {
-  const [cnd, setCnd] = useState("W0105090601");
+  const [cnd, setCnd] = useState(DEFAULT_CODE);
   const [status, setStatus] = useState(STATUSES[0].value);
-  const [data, setData] = useState<ApiResult | null>(null);
-  const [loading, setLoading] = useState(false);
+  // The query whose results are on screen (inputs may have been edited since).
+  const [query, setQuery] = useState<{ code: string; status: string } | null>(null);
+  const [list, setList] = useState<ListState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [detailUuid, setDetailUuid] = useState<string | null>(null);
+  const [details, setDetails] = useState<Record<string, Detail>>({});
+  const [requested, setRequested] = useState<Set<string>>(new Set());
+  const [facets, setFacets] = useState<Facets>({});
   const [filter, setFilter] = useState("");
+  const [sort, setSort] = useState<{ col: number; dir: 1 | -1 } | null>(null);
+  const [page, setPage] = useState(0);
+  const [openUuid, setOpenUuid] = useState<string | null>(null);
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const exportCancel = useRef(false);
-  // Bumped on every new search/page so stale detail lookups stop updating.
-  const pageGen = useRef(0);
+  const searchGen = useRef(0);
 
-  const enrichRows = useCallback(async (targets: Row[]) => {
-    const gen = pageGen.current;
-    await fetchDetails(
-      targets,
-      PAGE_BATCH,
-      (map) =>
-        setData((prev) =>
-          prev && {
-            ...prev,
-            rows: prev.rows.map((r) => (map[r.uuid] ? applyDetail(r, map[r.uuid]) : r)),
-          },
-        ),
-      () => pageGen.current !== gen,
-    );
-  }, []);
-
-  const load = useCallback(
-    async (page: number) => {
-      const gen = ++pageGen.current;
-      setLoading(true);
-      setError(null);
-      try {
+  // ---- Device list: every page, 100 at a time ------------------------------
+  const runSearch = useCallback(async (code: string, st: string, keepFacets?: Facets) => {
+    const gen = ++searchGen.current;
+    setQuery({ code, status: st });
+    setError(null);
+    setNotice(null);
+    setFacets(keepFacets ?? {});
+    setFilter("");
+    setSort(null);
+    setPage(0);
+    setList({ rows: [], total: 0, loading: true });
+    writeUrl(code, st, keepFacets ?? {});
+    const rows: Row[] = [];
+    try {
+      for (let p = 0; ; p++) {
         const q = new URLSearchParams({
-          cndCode: cnd.trim(),
-          status,
-          page: String(page),
-          pageSize: "25",
+          cndCode: code,
+          status: st,
+          page: String(p),
+          pageSize: String(LIST_PAGE),
         });
         const res = await fetch(`/api/search?${q}`);
         const json = await res.json();
+        if (gen !== searchGen.current) return;
         if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-        if (gen !== pageGen.current) return;
-        const rows: Row[] = json.rows.map((r: Row) => ({ ...r, detail: "pending" }));
-        setData({ ...json, rows });
-        // Table shows straight away; details fill in batch by batch.
-        enrichRows(rows);
-      } catch (e) {
-        if (gen !== pageGen.current) return;
-        setError((e as Error).message);
-        setData(null);
-      } finally {
-        if (gen === pageGen.current) setLoading(false);
+        rows.push(...json.rows);
+        const done = json.rows.length === 0 || rows.length >= json.totalElements || rows.length >= LIST_CAP;
+        setList({ rows: [...rows], total: json.totalElements, loading: !done });
+        if (done) {
+          if (json.totalElements > rows.length)
+            setNotice(`Showing the first ${rows.length.toLocaleString()} of ${json.totalElements.toLocaleString()} devices.`);
+          return;
+        }
       }
-    },
-    [cnd, status, enrichRows],
+    } catch (e) {
+      if (gen !== searchGen.current) return;
+      setError((e as Error).message);
+      setList(rows.length ? { rows, total: rows.length, loading: false } : null);
+    }
+  }, []);
+
+  // Open a shared link on first load.
+  useEffect(() => {
+    const u = readUrl();
+    if (u.code) {
+      setCnd(u.code);
+      if (u.status) setStatus(u.status);
+      runSearch(u.code, u.status ?? STATUSES[0].value, u.facets);
+    }
+  }, [runSearch]);
+
+  useEffect(() => {
+    if (query) writeUrl(query.code, query.status, facets);
+  }, [query, facets]);
+
+  // ---- Filtering, sorting, paging (all in the browser) ---------------------
+  const merged = useMemo(
+    () =>
+      (list?.rows ?? []).map((r) =>
+        applyDetail(r, details[r.uuid], requested.has(r.uuid)),
+      ),
+    [list, details, requested],
+  );
+  // Row number = position in the EUDAMED list, so it stays put when sorting.
+  const position = useMemo(() => new Map(merged.map((r, i) => [r.uuid, i])), [merged]);
+
+  const facetRows = useMemo(() => merged.filter((r) => matchesFacets(r, facets)), [merged, facets]);
+  const shown = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    let out = needle
+      ? facetRows.filter((r) =>
+          [
+            r.tradeName,
+            r.deviceName,
+            r.deviceModel,
+            r.manufacturer,
+            r.manufacturerSrn,
+            r.authorisedRepresentative,
+            r.reference,
+            r.additionalDescription,
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(needle),
+        )
+      : facetRows;
+    if (sort && sort.col > 0) {
+      const key = (r: Row) => toCells(r, 0)[sort.col];
+      out = [...out].sort((a, b) => {
+        const x = key(a),
+          y = key(b);
+        if (!x !== !y) return x ? -1 : 1; // blanks last either way
+        return x.localeCompare(y, undefined, { numeric: true }) * sort.dir;
+      });
+    } else if (sort?.dir === -1) {
+      out = [...out].reverse();
+    }
+    return out;
+  }, [facetRows, filter, sort]);
+
+  const pages = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const pageNow = Math.min(page, pages - 1);
+  const visible = useMemo(
+    () => shown.slice(pageNow * PAGE_SIZE, (pageNow + 1) * PAGE_SIZE),
+    [shown, pageNow],
   );
 
-  const retryFailed = useCallback(() => {
-    if (!data) return;
-    const failed = data.rows.filter((r) => r.detail === "failed");
-    const ids = new Set(failed.map((r) => r.uuid));
-    setData({
-      ...data,
-      rows: data.rows.map((r) => (ids.has(r.uuid) ? { ...r, detail: "pending" } : r)),
-    });
-    enrichRows(failed);
-  }, [data, enrichRows]);
+  // ---- Details for the rows on screen --------------------------------------
+  // One client-side worker; rows on the current page go to the front.
+  const queue = useRef<Row[]>([]);
+  const working = useRef(false);
 
-  // Export walks the whole result set from the browser: list pages of 100,
-  // then details in small batches. Each request stays well under App Runner's
-  // 120s limit; anything already looked up comes from the server cache.
+  const pump = useCallback(async () => {
+    if (working.current) return;
+    working.current = true;
+    while (queue.current.length) {
+      const batch = queue.current.splice(0, PAGE_BATCH);
+      await fetchDetails(batch, PAGE_BATCH, (map) => setDetails((d) => ({ ...d, ...map })), () => false);
+    }
+    working.current = false;
+  }, []);
+
+  useEffect(() => {
+    const need = visible.filter((r) => !details[r.uuid] && !requested.has(r.uuid));
+    if (need.length === 0) return;
+    setRequested((s) => new Set([...s, ...need.map((r) => r.uuid)]));
+    const ids = new Set(need.map((r) => r.uuid));
+    queue.current = [...need, ...queue.current.filter((r) => !ids.has(r.uuid))];
+    pump();
+  }, [visible, details, requested, pump]);
+
+  const pendingOnPage = visible.filter((r) => r.detail === "pending").length;
+  const failedOnPage = visible.filter((r) => r.detail === "failed");
+
+  const retryFailed = () => {
+    const ids = new Set(failedOnPage.map((r) => r.uuid));
+    setDetails((d) => Object.fromEntries(Object.entries(d).filter(([k]) => !ids.has(k))));
+    setRequested((s) => new Set([...s].filter((k) => !ids.has(k))));
+  };
+
+  const toggleFacet = (key: FacetKey, value: string) => {
+    setFacets((f) => {
+      const next = { ...f };
+      if (next[key] === value) delete next[key];
+      else next[key] = value;
+      return next;
+    });
+    setPage(0);
+  };
+
+  const toggleSort = (col: number) =>
+    setSort((s) =>
+      !s || s.col !== col ? { col, dir: 1 } : s.dir === 1 ? { col, dir: -1 } : null,
+    );
+
+  // ---- Export: the rows currently shown (all pages) ------------------------
+  // Runs from the browser in small steps so no request nears App Runner's 120s
+  // limit; details already looked up (here or by anyone) come from cache.
   const runExport = useCallback(
     async (kind: "xlsx" | "pdf") => {
-      if (!data) return;
-      const code = cnd.trim() || "export";
+      if (!query || shown.length === 0) return;
       exportCancel.current = false;
       setError(null);
       setNotice(null);
+      const local: Record<string, Detail> = { ...details };
+      const need = shown.filter((r) => !local[r.uuid] || local[r.uuid].failed);
+      let done = shown.length - need.length;
+      setExportProgress({ kind, done, total: shown.length });
       try {
-        const all: Row[] = [];
-        let total = data.totalElements;
-        setExportProgress({ kind, phase: "list", done: 0, total });
-        for (let page = 0; all.length < total && !exportCancel.current; page++) {
-          const q = new URLSearchParams({
-            cndCode: code,
-            status,
-            page: String(page),
-            pageSize: "100",
-          });
-          const res = await fetch(`/api/search?${q}`);
-          const json = await res.json();
-          if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-          if (json.rows.length === 0) break;
-          all.push(...json.rows);
-          total = json.totalElements;
-          setExportProgress({ kind, phase: "list", done: all.length, total });
-        }
-        let done = 0;
-        let rows = all;
-        setExportProgress({ kind, phase: "details", done, total: all.length });
         await fetchDetails(
-          all,
+          need,
           EXPORT_BATCH,
           (map) => {
-            rows = rows.map((r) => (map[r.uuid] ? applyDetail(r, map[r.uuid]) : r));
+            Object.assign(local, map);
+            setDetails((d) => ({ ...d, ...map }));
             done += Object.keys(map).length;
-            setExportProgress({ kind, phase: "details", done, total: all.length });
+            setExportProgress({ kind, done, total: shown.length });
           },
           () => exportCancel.current,
         );
         if (exportCancel.current) return;
-        if (kind === "xlsx") exportXlsx(rows, code);
-        else exportPdf(rows, code);
+        const rows = shown.map((r) => applyDetail(r, local[r.uuid], false));
+        const name = query.code + (Object.keys(facets).length ? "_filtered" : "");
+        if (kind === "xlsx") exportXlsx(rows, name);
+        else exportPdf(rows, name);
         const failed = rows.filter((r) => r.detail === "failed").length;
         if (failed)
           setNotice(
             `Exported ${rows.length} devices; details could not be loaded for ${failed}, so some of their fields are blank.`,
           );
-      } catch (e) {
-        setError(`Export failed: ${(e as Error).message}`);
       } finally {
         setExportProgress(null);
       }
     },
-    [cnd, status, data],
+    [query, shown, details, facets],
   );
 
-  const rows = (data?.rows ?? []).filter((r) => {
-    if (!filter.trim()) return true;
-    const hay = [
-      r.tradeName,
-      r.deviceName,
-      r.manufacturer,
-      r.manufacturerSrn,
-      r.authorisedRepresentative,
-      r.reference,
-      r.additionalDescription,
-    ]
-      .join(" ")
-      .toLowerCase();
-    return hay.includes(filter.toLowerCase());
-  });
-
-  const code = cnd.trim();
-  const offset = data ? data.page * data.pageSize : 0;
-  const pending = data?.rows.filter((r) => r.detail === "pending").length ?? 0;
-  const failedCount = data?.rows.filter((r) => r.detail === "failed").length ?? 0;
+  const loading = list?.loading ?? false;
+  const activeFacets = Object.entries(facets) as [FacetKey, string][];
 
   return (
     <div className="pdf-sheet">
-      {/* Controls — kept compact so the sheet below reads like the PDF */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          load(0);
+          if (cnd.trim()) runSearch(cnd.trim(), status);
         }}
         className="pdf-controls"
       >
+        <span className="brand">EUDAMED Explorer</span>
         <input
           value={cnd}
           onChange={(e) => setCnd(e.target.value)}
@@ -261,55 +363,33 @@ export default function Home() {
           aria-label="EMDN / CND code"
           className="w-56"
         />
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          aria-label="Status"
-        >
+        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
           {STATUSES.map((s) => (
             <option key={s.value} value={s.value}>
               {s.label}
             </option>
           ))}
         </select>
-        <button type="submit" className="primary" disabled={loading || !code}>
-          {loading ? "Searching…" : "Search"}
+        <button type="submit" className="primary" disabled={!cnd.trim()}>
+          Search
         </button>
-        {data && (
-          <>
-            <input
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="Filter this page…"
-              aria-label="Filter this page"
-              className="w-44"
-            />
-            <button
-              type="button"
-              onClick={() => load(data.page - 1)}
-              disabled={data.page <= 0 || loading}
-            >
-              ← Prev
-            </button>
-            <span className="pdf-muted">
-              page {data.page + 1} / {data.totalPages}
-            </span>
-            <button
-              type="button"
-              onClick={() => load(data.page + 1)}
-              disabled={data.page >= data.totalPages - 1 || loading}
-            >
-              Next →
-            </button>
-          </>
-        )}
         <span className="flex-1" />
+        {query && (
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard?.writeText(window.location.href);
+              setNotice("Link copied — it opens this search with the same filters.");
+            }}
+          >
+            Copy link
+          </button>
+        )}
         {exportProgress ? (
           <>
             <span className="pdf-muted">
-              Exporting {exportProgress.kind.toUpperCase()} ·{" "}
-              {exportProgress.phase === "list" ? "device list" : "device details"}{" "}
-              {exportProgress.done}/{exportProgress.total}
+              Exporting {exportProgress.kind.toUpperCase()} · device details {exportProgress.done}/
+              {exportProgress.total}
             </span>
             <progress
               className="pdf-progress"
@@ -322,65 +402,107 @@ export default function Home() {
           </>
         ) : (
           <>
-            <button type="button" onClick={() => runExport("xlsx")} disabled={!data}>
+            <button type="button" onClick={() => runExport("xlsx")} disabled={!shown.length || loading}>
               Export XLSX
             </button>
-            <button type="button" onClick={() => runExport("pdf")} disabled={!data}>
+            <button type="button" onClick={() => runExport("pdf")} disabled={!shown.length || loading}>
               Export PDF
             </button>
           </>
         )}
       </form>
 
-      {/* Title block — mirrors exportPdf: 13pt title, 9pt grey subtitle */}
-      <h1 className="pdf-title">EUDAMED devices — EMDN {code || "…"}</h1>
+      <h1 className="pdf-title">EUDAMED devices — EMDN {query?.code ?? (cnd.trim() || "…")}</h1>
       <p className="pdf-subtitle">
-        {data
-          ? `${data.totalElements} devices · ${new Date().toLocaleDateString()} · source: EUDAMED public API`
+        {list
+          ? `${(list.total || list.rows.length).toLocaleString()} devices · ${new Date().toLocaleDateString()} · source: EUDAMED public API`
           : "Enter an EMDN / CND code and press Search · source: EUDAMED public API"}
-        {pending > 0 &&
-          ` · loading device details ${data!.rows.length - pending}/${data!.rows.length} (EUDAMED allows ~20 lookups a minute)`}
-        {failedCount > 0 && pending === 0 && (
-          <>
-            {` · details failed for ${failedCount} `}
-            <button type="button" className="pdf-link" onClick={retryFailed}>
-              retry
-            </button>
-          </>
-        )}
+        {loading &&
+          ` · loading device list ${list!.rows.length}/${list!.total || "…"} (EUDAMED takes ~30s per 100)`}
       </p>
 
       {error && <p className="pdf-error">Error: {error}</p>}
       {notice && <p className="pdf-subtitle">{notice}</p>}
-      {loading && !data && (
-        <p className="pdf-subtitle">Fetching from EUDAMED… the first request can take a moment.</p>
+      {!list && !error && (
+        <div className="empty">
+          <p>Search EU medical-device registrations by EMDN code.</p>
+          <button type="button" className="pdf-link" onClick={() => runSearch(DEFAULT_CODE, STATUSES[0].value)}>
+            Try {DEFAULT_CODE} — COVID-19 / influenza rapid tests
+          </button>
+        </div>
+      )}
+      {list && list.rows.length === 0 && loading && (
+        <p className="pdf-subtitle">Fetching the device list from EUDAMED… the first page takes about 30 seconds.</p>
       )}
 
-      {data && (
-        <table className="pdf-table">
-          <thead>
-            <tr>
-              {HEADERS.map((h) => (
-                <th key={h}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const n = data.rows.indexOf(r);
-              return (
-                <tr
-                  key={r.uuid}
-                  onClick={() => setDetailUuid(r.uuid)}
-                  title="Click for the full device record"
-                >
-                  {toCells(r, offset + n).map((c, j) => (
+      {list && list.rows.length > 0 && (
+        <>
+          <Overview rows={facetRows} facets={facets} onToggle={toggleFacet} />
+
+          <div className="table-bar">
+            {activeFacets.map(([k, v]) => (
+              <button key={k} type="button" className="chip-filter" onClick={() => toggleFacet(k, v)}>
+                {FACET_LABELS[k]}: {v} ✕
+              </button>
+            ))}
+            {activeFacets.length > 1 && (
+              <button type="button" className="pdf-link" onClick={() => setFacets({})}>
+                clear all
+              </button>
+            )}
+            <input
+              value={filter}
+              onChange={(e) => {
+                setFilter(e.target.value);
+                setPage(0);
+              }}
+              placeholder="Search in results…"
+              aria-label="Search in results"
+              className="w-52"
+            />
+            <span className="pdf-muted">
+              {shown.length.toLocaleString()} shown
+              {pendingOnPage > 0 &&
+                ` · loading details ${visible.length - pendingOnPage}/${visible.length} (EUDAMED allows ~20 lookups a minute)`}
+              {failedOnPage.length > 0 && pendingOnPage === 0 && (
+                <>
+                  {` · details failed for ${failedOnPage.length} `}
+                  <button type="button" className="pdf-link" onClick={retryFailed}>
+                    retry
+                  </button>
+                </>
+              )}
+            </span>
+            <span className="flex-1" />
+            <button type="button" onClick={() => setPage(pageNow - 1)} disabled={pageNow <= 0}>
+              ← Prev
+            </button>
+            <span className="pdf-muted">
+              page {pageNow + 1} / {pages}
+            </span>
+            <button type="button" onClick={() => setPage(pageNow + 1)} disabled={pageNow >= pages - 1}>
+              Next →
+            </button>
+          </div>
+
+          <table className="pdf-table">
+            <thead>
+              <tr>
+                {HEADERS.map((h, j) => (
+                  <th key={h} onClick={() => toggleSort(j)} className="sortable" title="Click to sort">
+                    {h}
+                    {sort?.col === j ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r) => (
+                <tr key={r.uuid} onClick={() => setOpenUuid(r.uuid)} title="Click for the device record">
+                  {toCells(r, position.get(r.uuid) ?? 0).map((c, j) => (
                     <td key={j}>
                       {j === 0 && r.detail === "failed" ? (
-                        <span
-                          className="pdf-failed"
-                          title="Device details could not be loaded from EUDAMED"
-                        >
+                        <span className="pdf-failed" title="Device details could not be loaded from EUDAMED">
                           {c} ⚠
                         </span>
                       ) : !c && r.detail === "pending" && DETAIL_COLS.has(j) ? (
@@ -391,135 +513,18 @@ export default function Home() {
                     </td>
                   ))}
                 </tr>
-              );
-            })}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={HEADERS.length}>No rows match “{filter}” on this page.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      )}
-
-      {detailUuid && (
-        <DetailDrawer uuid={detailUuid} onClose={() => setDetailUuid(null)} />
-      )}
-    </div>
-  );
-}
-
-
-
-
-
-function DetailDrawer({ uuid, onClose }: { uuid: string; onClose: () => void }) {
-  const [data, setData] = useState<{ basic: any; udi: any } | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    setData(null);
-    setErr(null);
-    fetch(`/api/device/${uuid}`)
-      .then((r) => r.json())
-      .then((j) => {
-        if (!active) return;
-        if (j.error) setErr(j.error);
-        else setData(j);
-      })
-      .catch((e) => active && setErr(e.message));
-    return () => {
-      active = false;
-    };
-  }, [uuid]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="h-full w-full max-w-2xl overflow-y-auto bg-slate-50 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white/90 px-6 py-4 backdrop-blur">
-          <div>
-            <h2 className="text-base font-bold text-slate-900">
-              Full device record
-            </h2>
-            <p className="font-mono text-[11px] text-slate-400">{uuid}</p>
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Close ✕
-          </button>
-        </div>
-        <div className="space-y-5 p-6">
-          {err && (
-            <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-              {err}
-            </p>
-          )}
-          {!data && !err && (
-            <div className="space-y-2">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="h-4 animate-pulse rounded bg-slate-200" />
               ))}
-            </div>
-          )}
-          {data && (
-            <>
-              <Section title="Basic UDI / device" obj={data.basic} />
-              <Section title="UDI-DI (packaging level)" obj={data.udi} />
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Section({ title, obj }: { title: string; obj: any }) {
-  if (!obj) return null;
-  const entries = Object.entries(obj).filter(
-    ([, v]) =>
-      v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0),
-  );
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <h3 className="mb-3 flex items-center justify-between text-sm font-bold text-slate-800">
-        {title}
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
-          {entries.length} populated
-        </span>
-      </h3>
-      <dl className="divide-y divide-slate-100">
-        {entries.map(([k, v]) => (
-          <div key={k} className="grid grid-cols-[170px_1fr] gap-3 py-1.5">
-            <dt className="truncate font-mono text-xs text-slate-500" title={k}>
-              {k}
-            </dt>
-            <dd className="break-words text-xs text-slate-800">
-              {typeof v === "object" ? (
-                <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-slate-50 p-2 text-[11px] leading-snug text-slate-600">
-                  {JSON.stringify(v, null, 1)}
-                </pre>
-              ) : (
-                String(v)
+              {visible.length === 0 && (
+                <tr>
+                  <td colSpan={HEADERS.length}>No devices match the current filters.</td>
+                </tr>
               )}
-            </dd>
-          </div>
-        ))}
-      </dl>
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {openUuid && <DeviceSheet uuid={openUuid} onClose={() => setOpenUuid(null)} />}
     </div>
   );
 }

@@ -131,3 +131,317 @@ body {
 .pdf-failed {
   color: rgb(185, 28, 28);
 }
+
+/* ---- Toolbar + empty state ---------------------------------------------- */
+.brand {
+  font-weight: bold;
+  color: rgb(37, 99, 235);
+  margin-right: 6pt;
+}
+.empty {
+  margin: 24pt 16pt;
+  font-size: 10pt;
+  color: rgb(110, 110, 110);
+}
+.empty p {
+  margin-bottom: 4pt;
+}
+
+/* ---- Overview dashboard ------------------------------------------------- */
+.ov {
+  margin: 0 0 12pt;
+}
+.ov-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8pt;
+  margin-bottom: 8pt;
+}
+.ov-kpi {
+  border: 1px solid rgb(226, 232, 240);
+  border-left: 3pt solid rgb(37, 99, 235);
+  padding: 8pt 10pt;
+  background: #fff;
+}
+.ov-kpi-value {
+  font-size: 18pt;
+  line-height: 1.1;
+  color: #000;
+}
+.ov-kpi-label {
+  font-size: 8pt;
+  color: rgb(110, 110, 110);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ov-kpi-hint {
+  font-size: 8pt;
+  color: rgb(37, 99, 235);
+  margin-top: 2pt;
+}
+.ov-charts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8pt;
+}
+@media (max-width: 1100px) {
+  .ov-kpis,
+  .ov-charts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.ov-card {
+  border: 1px solid rgb(226, 232, 240);
+  padding: 8pt 10pt;
+  background: #fff;
+}
+.ov-card h3 {
+  font-size: 8pt;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(110, 110, 110);
+  margin-bottom: 4pt;
+}
+.ov-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 22pt;
+  align-items: center;
+  gap: 6pt;
+  width: 100%;
+  padding: 2pt 3pt;
+  font: inherit;
+  font-size: 7.5pt;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 2pt;
+  cursor: pointer;
+  color: rgb(20, 20, 20);
+}
+.ov-bar:hover {
+  background: rgb(239, 246, 255);
+}
+.ov-bar.on {
+  background: rgb(219, 234, 254);
+  font-weight: bold;
+}
+.ov-bar.dim {
+  opacity: 0.45;
+}
+.ov-bar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-bar-track {
+  height: 6pt;
+  background: rgb(241, 245, 249);
+  border-radius: 3pt;
+  overflow: hidden;
+}
+.ov-bar-fill {
+  display: block;
+  height: 100%;
+  background: rgb(37, 99, 235);
+  border-radius: 3pt;
+}
+.ov-bar-n {
+  text-align: right;
+  color: rgb(110, 110, 110);
+}
+.ov-more {
+  font-size: 7pt;
+  color: rgb(150, 150, 150);
+  margin: 2pt 0 0 3pt;
+}
+
+/* ---- Table bar, filter chips, sortable headers -------------------------- */
+.table-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6pt;
+  padding: 0 0 6pt;
+  font-size: 8.5pt;
+}
+.table-bar input,
+.table-bar button:not(.pdf-link):not(.chip-filter) {
+  font: inherit;
+  border: 1px solid rgb(200, 200, 200);
+  border-radius: 2pt;
+  padding: 3pt 6pt;
+  background: #fff;
+}
+.table-bar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.chip-filter {
+  font: inherit;
+  background: rgb(37, 99, 235);
+  color: #fff;
+  border: 0;
+  border-radius: 10pt;
+  padding: 3pt 9pt;
+  cursor: pointer;
+}
+.pdf-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.pdf-table th.sortable:hover {
+  background: rgb(29, 78, 216);
+}
+
+/* ---- Device sheet (drawer) ---------------------------------------------- */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(15, 23, 42, 0.35);
+}
+.sheet {
+  width: 100%;
+  max-width: 640px;
+  height: 100%;
+  overflow-y: auto;
+  background: #fff;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.15);
+}
+.sheet-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12pt;
+  padding: 14pt 18pt 10pt;
+  background: #fff;
+  border-top: 4pt solid rgb(37, 99, 235);
+  border-bottom: 1px solid rgb(226, 232, 240);
+}
+.sheet-kicker {
+  font-size: 7.5pt;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgb(110, 110, 110);
+}
+.sheet-head h2 {
+  font-size: 13pt;
+  font-weight: normal;
+  color: #000;
+  margin: 2pt 0 6pt;
+}
+.sheet-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4pt;
+}
+.badge {
+  font-size: 7.5pt;
+  padding: 2pt 7pt;
+  border-radius: 10pt;
+  background: rgb(241, 245, 249);
+  color: rgb(51, 65, 85);
+}
+.badge.ok {
+  background: rgb(220, 252, 231);
+  color: rgb(21, 128, 61);
+}
+.sheet-close {
+  font: inherit;
+  font-size: 9pt;
+  border: 1px solid rgb(200, 200, 200);
+  border-radius: 2pt;
+  padding: 3pt 8pt;
+  background: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sheet-body {
+  padding: 12pt 18pt 24pt;
+  font-size: 9pt;
+}
+.sheet-block {
+  margin-bottom: 12pt;
+}
+.sheet-block h3 {
+  font-size: 7.5pt;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgb(37, 99, 235);
+  border-bottom: 1px solid rgb(226, 232, 240);
+  padding-bottom: 3pt;
+  margin-bottom: 5pt;
+}
+.sheet-desc {
+  line-height: 1.45;
+  color: rgb(20, 20, 20);
+}
+.sheet-fields > div {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 8pt;
+  padding: 2.5pt 0;
+}
+.sheet-fields dt {
+  color: rgb(110, 110, 110);
+}
+.sheet-fields dd {
+  color: rgb(20, 20, 20);
+  word-break: break-word;
+}
+.sheet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4pt;
+}
+.chip {
+  font-size: 8pt;
+  padding: 2pt 7pt;
+  border: 1px solid rgb(191, 219, 254);
+  background: rgb(239, 246, 255);
+  color: rgb(30, 64, 175);
+  border-radius: 10pt;
+}
+.sheet-raw {
+  margin-top: 16pt;
+  border-top: 1px solid rgb(226, 232, 240);
+  padding-top: 8pt;
+}
+.sheet-raw summary {
+  cursor: pointer;
+  color: rgb(37, 99, 235);
+  font-size: 8.5pt;
+}
+.sheet-rawblock h4 {
+  font-size: 8pt;
+  font-weight: bold;
+  margin: 10pt 0 4pt;
+}
+.sheet-rawblock dl > div {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 8pt;
+  padding: 2pt 0;
+  border-bottom: 1px solid rgb(241, 245, 249);
+  font-size: 7.5pt;
+}
+.sheet-rawblock dt {
+  font-family: ui-monospace, Menlo, monospace;
+  color: rgb(110, 110, 110);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sheet-rawblock pre {
+  white-space: pre-wrap;
+  font-size: 7pt;
+  background: rgb(248, 250, 252);
+  padding: 4pt;
+}

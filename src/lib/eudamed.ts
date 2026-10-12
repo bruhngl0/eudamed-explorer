@@ -1,3 +1,5 @@
+import { countryName, srnCountry } from "./countries";
+
 // Thin server-side client for EUDAMED's public device API.
 // These endpoints block direct browser calls (CORS), so everything goes through
 // Next.js API routes that call these helpers.
@@ -250,7 +252,8 @@ export function mapListRow(r: ListRow): EnrichedRow {
     manufacturerSrn: r.manufacturerSrn ?? null,
     deviceStatusId: r.deviceStatusType?.code ?? null,
     authorisedRepresentative: r.authorisedRepresentativeName ?? null,
-    authorisedRepresentativeCountry: null,
+    // From the SRN prefix; the detail lookup later confirms it.
+    authorisedRepresentativeCountry: countryName(srnCountry(r.authorisedRepresentativeSrn)),
     authorisedRepresentativeSrn: r.authorisedRepresentativeSrn ?? null,
     criterion: r.deviceCriterion ?? null,
     reference: r.reference ?? null,
