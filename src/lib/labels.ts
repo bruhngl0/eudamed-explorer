@@ -1,5 +1,9 @@
 // Human-readable labels for EUDAMED refdata codes, plus colour hints for badges.
 
+// The device's public page on the EUDAMED website.
+export const sourceUrl = (uuid: string) =>
+  `https://ec.europa.eu/tools/eudamed/#/screen/search-device/${uuid}`;
+
 export function riskLabel(code: string | null): string {
   if (!code) return "—";
   const k = code.split(".").pop() || code;

@@ -168,6 +168,7 @@ export interface Enrichment {
   deviceCriterion: string | null;
   authorisedRepresentativeCountry: string | null;
   additionalDescription: string | null;
+  marketDistribution: string | null;
   failed: boolean; // a detail lookup failed; fields above may be missing
 }
 
@@ -178,9 +179,17 @@ function pickText(block: any): string | null {
   return (en ?? texts[0])?.text ?? block?.textByDefaultLanguage ?? null;
 }
 
+// Member states where the device is or is to be made available.
+function marketDistribution(udi: any): string | null {
+  const names = ((udi?.marketInfoLink?.msWhereAvailable ?? []) as any[])
+    .map((m) => m?.country?.name ?? countryName(m?.country?.iso2Code))
+    .filter(Boolean) as string[];
+  return names.length ? [...new Set(names)].sort().join(", ") : null;
+}
+
 // Basic UDI holds name/model/criterion/AR country and is shared by every pack
 // size (UDI-DI) under it, so it is cached by Basic UDI. The UDI-DI record holds
-// the additional product description.
+// the additional product description and the market distribution.
 export async function enrich(uuid: string, basicUdi?: string | null): Promise<Enrichment> {
   const basicUrl = `${BASE}/devices/basicUdiData/udiDiData/${uuid}?languageIso2Code=en`;
   const udiUrl = `${BASE}/devices/udiDiData/${uuid}?languageIso2Code=en`;
@@ -197,6 +206,7 @@ export async function enrich(uuid: string, basicUdi?: string | null): Promise<En
     authorisedRepresentativeCountry:
       b?.authorisedRepresentative?.countryName ?? null,
     additionalDescription: pickText(u?.additionalDescription),
+    marketDistribution: marketDistribution(u),
     failed: b === undefined || u === undefined,
   };
 }
@@ -218,6 +228,7 @@ export interface EnrichedRow {
   criterion: string | null;
   reference: string | null;
   additionalDescription: string | null;
+  marketDistribution: string | null;
 }
 
 // Run an async mapper over items with a bounded number of concurrent calls.
@@ -239,7 +250,7 @@ async function pool<T, R>(
 }
 
 // Fast map of a list row to the UI shape WITHOUT any extra calls.
-// The four detail-only fields are left null and filled lazily on the client.
+// The detail-only fields are left null and filled lazily on the client.
 export function mapListRow(r: ListRow): EnrichedRow {
   return {
     uuid: r.uuid,
@@ -258,6 +269,7 @@ export function mapListRow(r: ListRow): EnrichedRow {
     criterion: r.deviceCriterion ?? null,
     reference: r.reference ?? null,
     additionalDescription: null,
+    marketDistribution: null,
   };
 }
 
@@ -272,13 +284,15 @@ export async function enrichItems(
   return out;
 }
 
-export async function detail(uuid: string) {
+// Same cache keys as enrich(), so a device already shown in the table opens
+// without another EUDAMED call.
+export async function detail(uuid: string, basicUdi?: string | null) {
   const basicUrl = `${BASE}/devices/basicUdiData/udiDiData/${uuid}?languageIso2Code=en`;
   const udiUrl = `${BASE}/devices/udiDiData/${uuid}?languageIso2Code=en`;
   const [basic, udi] = await Promise.all([
-    cached(basicUrl, 24 * HOUR, () => getJson<any>(basicUrl, { high: true })).catch(
-      () => null,
-    ),
+    cached(basicUdi ? `basic:${basicUdi}` : basicUrl, 24 * HOUR, () =>
+      getJson<any>(basicUrl, { high: true }),
+    ).catch(() => null),
     cached(udiUrl, 24 * HOUR, () => getJson<any>(udiUrl, { high: true })).catch(
       () => null,
     ),

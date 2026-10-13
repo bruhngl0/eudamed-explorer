@@ -111,7 +111,8 @@ body {
 /* keep IDs on one line like the PDF (browsers would break them at hyphens) */
 .pdf-table td:nth-child(7),
 .pdf-table td:nth-child(11),
-.pdf-table td:nth-child(13) {
+.pdf-table td:nth-child(13),
+.pdf-table td:nth-child(16) {
   white-space: nowrap;
 }
 .pdf-progress {
@@ -127,6 +128,62 @@ body {
   border: 0;
   padding: 0;
   cursor: pointer;
+}
+.spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.45em;
+  vertical-align: -0.15em;
+  border: 0.15em solid rgb(203, 213, 225);
+  border-top-color: rgb(37, 99, 235);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+.spinner.light {
+  border-color: rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Skeleton placeholder: a grey bar with a moving sheen. */
+.skel {
+  display: inline-block;
+  width: 80%;
+  min-width: 14pt;
+  height: 0.9em;
+  vertical-align: middle;
+  border-radius: 2pt;
+  background: linear-gradient(90deg, rgb(226, 232, 240) 25%, rgb(241, 245, 249) 50%, rgb(226, 232, 240) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s linear infinite;
+}
+.skel-line {
+  display: block;
+  height: 8pt;
+  margin: 5pt 0;
+}
+.skel-kpi {
+  display: block;
+  width: 35%;
+  height: 18pt;
+  margin-bottom: 4pt;
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.5s;
+  }
+  .skel {
+    animation: none;
+  }
 }
 .pdf-failed {
   color: rgb(185, 28, 28);

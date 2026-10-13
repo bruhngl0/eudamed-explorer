@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 // Fills the detail-only fields (device name/model, criterion, AR country,
-// additional description) for a small batch of devices. The page and the
+// additional description, market distribution) for a small batch of devices. The page and the
 // exporter call this a few rows at a time so results arrive progressively and
 // no request comes near App Runner's 120s limit.
 // Body: { items: [{ uuid, basicUdi }] }

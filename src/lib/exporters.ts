@@ -1,9 +1,10 @@
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { riskLabel, statusLabel } from "./labels";
+import { riskLabel, sourceUrl, statusLabel } from "./labels";
 
 export interface ExportRow {
+  uuid: string;
   tradeName: string | null;
   deviceName: string | null;
   deviceModel: string | null;
@@ -17,6 +18,7 @@ export interface ExportRow {
   criterion: string | null;
   reference: string | null;
   additionalDescription: string | null;
+  marketDistribution: string | null;
 }
 
 const d = (v: string | null) => (v && v.trim() ? v : "");
@@ -36,7 +38,12 @@ export const HEADERS = [
   "Criterion",
   "Reference",
   "Additional product description",
+  "Market distribution",
+  "Source",
 ];
+
+// Column holding the link to the device's EUDAMED page.
+export const SOURCE_COL = HEADERS.length - 1;
 
 export function toCells(r: ExportRow, i: number): string[] {
   return [
@@ -54,12 +61,18 @@ export function toCells(r: ExportRow, i: number): string[] {
     d(r.criterion),
     d(r.reference),
     d(r.additionalDescription),
+    d(r.marketDistribution),
+    sourceUrl(r.uuid),
   ];
 }
 
 export function exportXlsx(rows: ExportRow[], code: string) {
   const aoa = [HEADERS, ...rows.map((r, i) => toCells(r, i))];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
+  rows.forEach((r, i) => {
+    const cell = ws[XLSX.utils.encode_cell({ r: i + 1, c: SOURCE_COL })];
+    if (cell) cell.l = { Target: sourceUrl(r.uuid) };
+  });
   ws["!cols"] = [
     { wch: 4 },
     { wch: 30 },
@@ -75,6 +88,8 @@ export function exportXlsx(rows: ExportRow[], code: string) {
     { wch: 12 },
     { wch: 16 },
     { wch: 40 },
+    { wch: 30 },
+    { wch: 70 },
   ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Devices");
@@ -95,11 +110,18 @@ export function exportPdf(rows: ExportRow[], code: string) {
   autoTable(doc, {
     startY: 58,
     head: [HEADERS],
-    body: rows.map((r, i) => toCells(r, i)),
+    // The page link is too long for a PDF column: show a short clickable label.
+    body: rows.map((r, i) => toCells(r, i).map((c, j) => (j === SOURCE_COL ? "EUDAMED" : c))),
     styles: { fontSize: 6.5, cellPadding: 2, overflow: "linebreak" },
     headStyles: { fillColor: [37, 99, 235], textColor: 255, fontSize: 6.5 },
     alternateRowStyles: { fillColor: [244, 247, 251] },
-    columnStyles: { 0: { cellWidth: 18 } },
+    columnStyles: { 0: { cellWidth: 18 }, [SOURCE_COL]: { textColor: [37, 99, 235] } },
+    didDrawCell: (c) => {
+      if (c.section === "body" && c.column.index === SOURCE_COL)
+        doc.link(c.cell.x, c.cell.y, c.cell.width, c.cell.height, {
+          url: sourceUrl(rows[c.row.index].uuid),
+        });
+    },
     margin: { left: 24, right: 24 },
   });
   doc.save(`EUDAMED_${code}_${rows.length}.pdf`);

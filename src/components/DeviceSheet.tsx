@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { riskLabel, statusLabel } from "@/lib/labels";
+import { isValidElement, useEffect, useState } from "react";
+import { riskLabel, sourceUrl, statusLabel } from "@/lib/labels";
 import { countryName } from "@/lib/countries";
 
 // Multilingual EUDAMED text block -> English text, else the first one given.
@@ -40,7 +40,15 @@ const FLAGS: [string, string][] = [
   ["microbialSubstances", "Contains microbial substances"],
 ];
 
-export function DeviceSheet({ uuid, onClose }: { uuid: string; onClose: () => void }) {
+export function DeviceSheet({
+  uuid,
+  basicUdi,
+  onClose,
+}: {
+  uuid: string;
+  basicUdi?: string | null;
+  onClose: () => void;
+}) {
   const [data, setData] = useState<{ basic: any; udi: any } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -48,7 +56,8 @@ export function DeviceSheet({ uuid, onClose }: { uuid: string; onClose: () => vo
     let active = true;
     setData(null);
     setErr(null);
-    fetch(`/api/device/${uuid}`)
+    // The Basic UDI lets the server reuse the record it fetched for the table.
+    fetch(`/api/device/${uuid}${basicUdi ? `?basicUdi=${encodeURIComponent(basicUdi)}` : ""}`)
       .then((r) => r.json())
       .then((j) => {
         if (!active) return;
@@ -60,7 +69,7 @@ export function DeviceSheet({ uuid, onClose }: { uuid: string; onClose: () => vo
     return () => {
       active = false;
     };
-  }, [uuid]);
+  }, [uuid, basicUdi]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -101,7 +110,22 @@ export function DeviceSheet({ uuid, onClose }: { uuid: string; onClose: () => vo
 
         <div className="sheet-body">
           {err && <p className="pdf-error">{err}</p>}
-          {!data && !err && <p className="pdf-muted">Fetching from EUDAMED…</p>}
+          {!data && !err && (
+            <div role="status">
+              <p className="pdf-muted">
+                <span className="spinner" aria-hidden="true" />
+                Fetching from EUDAMED…
+              </p>
+              {[5, 4, 5].map((n, i) => (
+                <section key={i} className="sheet-block" aria-hidden="true">
+                  <span className="skel skel-line" style={{ width: "30%" }} />
+                  {Array.from({ length: n }, (_, j) => (
+                    <span key={j} className="skel skel-line" style={{ width: `${85 - ((i + j * 3) % 5) * 9}%` }} />
+                  ))}
+                </section>
+              ))}
+            </div>
+          )}
           {data && (
             <>
               {text(u.additionalDescription) && (
@@ -141,8 +165,14 @@ export function DeviceSheet({ uuid, onClose }: { uuid: string; onClose: () => vo
                     ["Status", statusLabel(u.deviceStatus?.type?.code ?? null)],
                     ["Status since", date(u.deviceStatus?.statusDate)],
                     ["First placed on the market in", u.placedOnTheMarket?.name],
-                    ["Available in", markets.join(", ")],
+                    ["Market distribution", markets.join(", ")],
                     ["Last updated in EUDAMED", date(u.lastUpdated ?? b.lastUpdated)],
+                    [
+                      "Source",
+                      <a key="src" href={sourceUrl(uuid)} target="_blank" rel="noopener noreferrer" className="pdf-link">
+                        Open on EUDAMED ↗
+                      </a>,
+                    ],
                   ]}
                 />
               </Block>
@@ -204,7 +234,7 @@ function Fields({ items }: { items: [string, unknown][] }) {
       {shown.map(([k, v]) => (
         <div key={k}>
           <dt>{k}</dt>
-          <dd>{String(v)}</dd>
+          <dd>{isValidElement(v) ? v : String(v)}</dd>
         </div>
       ))}
     </dl>

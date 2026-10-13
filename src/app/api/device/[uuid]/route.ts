@@ -4,7 +4,7 @@ import { detail } from "@/lib/eudamed";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ uuid: string }> },
 ) {
   const { uuid } = await params;
@@ -13,7 +13,7 @@ export async function GET(
     return NextResponse.json({ error: "Invalid device id" }, { status: 400 });
   }
   try {
-    const data = await detail(uuid);
+    const data = await detail(uuid, req.nextUrl.searchParams.get("basicUdi"));
     return NextResponse.json(data);
   } catch (err) {
     return NextResponse.json(

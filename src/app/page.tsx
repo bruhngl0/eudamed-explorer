@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { exportXlsx, exportPdf, HEADERS, toCells } from "@/lib/exporters";
+import { exportXlsx, exportPdf, HEADERS, SOURCE_COL, toCells } from "@/lib/exporters";
 import {
   Overview,
   FACET_LABELS,
@@ -10,6 +10,7 @@ import {
   type Facets,
 } from "@/components/Overview";
 import { DeviceSheet } from "@/components/DeviceSheet";
+import { loadDetails, loadList, saveDetails, saveList } from "@/lib/browserCache";
 
 interface Row {
   uuid: string;
@@ -27,6 +28,7 @@ interface Row {
   criterion: string | null;
   reference: string | null;
   additionalDescription: string | null;
+  marketDistribution: string | null;
   detail?: "pending" | "done" | "failed";
 }
 
@@ -53,7 +55,7 @@ const STATUSES = [
 const DEFAULT_CODE = "W0105090601";
 
 // Table columns (toCells order) that come from the detail lookups.
-const DETAIL_COLS = new Set([2, 3, 11, 13]);
+const DETAIL_COLS = new Set([2, 3, 11, 13, 14]);
 const PAGE_SIZE = 25;
 const LIST_PAGE = 100; // EUDAMED list page size; ~20-40s each
 const LIST_CAP = 1000; // stop loading the list beyond this many devices
@@ -72,6 +74,7 @@ function applyDetail(r: Row, e: Detail | undefined, pending: boolean): Row {
     authorisedRepresentativeCountry:
       e.authorisedRepresentativeCountry ?? r.authorisedRepresentativeCountry,
     additionalDescription: e.additionalDescription ?? null,
+    marketDistribution: e.marketDistribution ?? null,
     detail: e.failed ? "failed" : "done",
   };
 }
@@ -101,6 +104,7 @@ async function fetchDetails(
       map = {};
     }
     for (const r of slice) map[r.uuid] ??= { failed: true };
+    saveDetails(map);
     if (!cancelled()) onBatch(map);
   }
 }
@@ -158,6 +162,17 @@ export default function Home() {
     setPage(0);
     setList({ rows: [], total: 0, loading: true });
     writeUrl(code, st, keepFacets ?? {});
+    const capNotice = (shownCount: number, total: number) => {
+      if (total > shownCount)
+        setNotice(`Showing the first ${shownCount.toLocaleString()} of ${total.toLocaleString()} devices.`);
+    };
+    // Seen in this browser within the hour: show it without asking EUDAMED.
+    const hit = loadList<Row>(code, st);
+    if (hit) {
+      setList({ rows: hit.rows, total: hit.total, loading: false });
+      capNotice(hit.rows.length, hit.total);
+      return;
+    }
     const rows: Row[] = [];
     try {
       for (let p = 0; ; p++) {
@@ -175,8 +190,8 @@ export default function Home() {
         const done = json.rows.length === 0 || rows.length >= json.totalElements || rows.length >= LIST_CAP;
         setList({ rows: [...rows], total: json.totalElements, loading: !done });
         if (done) {
-          if (json.totalElements > rows.length)
-            setNotice(`Showing the first ${rows.length.toLocaleString()} of ${json.totalElements.toLocaleString()} devices.`);
+          capNotice(rows.length, json.totalElements);
+          saveList(code, st, rows, json.totalElements);
           return;
         }
       }
@@ -187,8 +202,9 @@ export default function Home() {
     }
   }, []);
 
-  // Open a shared link on first load.
+  // Open a shared link on first load, with details this browser already has.
   useEffect(() => {
+    setDetails((d) => ({ ...loadDetails(), ...d }));
     const u = readUrl();
     if (u.code) {
       setCnd(u.code);
@@ -226,6 +242,7 @@ export default function Home() {
             r.authorisedRepresentative,
             r.reference,
             r.additionalDescription,
+            r.marketDistribution,
           ]
             .join(" ")
             .toLowerCase()
@@ -269,13 +286,17 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const need = visible.filter((r) => !details[r.uuid] && !requested.has(r.uuid));
+    const fresh = (rows: Row[]) => rows.filter((r) => !details[r.uuid] && !requested.has(r.uuid));
+    let need = fresh(visible);
+    // Nothing waiting: look up the next page too, so paging forward is instant.
+    if (need.length === 0 && queue.current.length === 0 && !working.current)
+      need = fresh(shown.slice((pageNow + 1) * PAGE_SIZE, (pageNow + 2) * PAGE_SIZE));
     if (need.length === 0) return;
     setRequested((s) => new Set([...s, ...need.map((r) => r.uuid)]));
     const ids = new Set(need.map((r) => r.uuid));
     queue.current = [...need, ...queue.current.filter((r) => !ids.has(r.uuid))];
     pump();
-  }, [visible, details, requested, pump]);
+  }, [visible, shown, pageNow, details, requested, pump]);
 
   const pendingOnPage = visible.filter((r) => r.detail === "pending").length;
   const failedOnPage = visible.filter((r) => r.detail === "failed");
@@ -344,6 +365,7 @@ export default function Home() {
   );
 
   const loading = list?.loading ?? false;
+  const openRow = openUuid ? merged.find((r) => r.uuid === openUuid) : undefined;
   const activeFacets = Object.entries(facets) as [FacetKey, string][];
 
   return (
@@ -371,6 +393,7 @@ export default function Home() {
           ))}
         </select>
         <button type="submit" className="primary" disabled={!cnd.trim()}>
+          {loading && <Spinner light />}
           Search
         </button>
         <span className="flex-1" />
@@ -388,6 +411,7 @@ export default function Home() {
         {exportProgress ? (
           <>
             <span className="pdf-muted">
+              <Spinner />
               Exporting {exportProgress.kind.toUpperCase()} · device details {exportProgress.done}/
               {exportProgress.total}
             </span>
@@ -417,8 +441,13 @@ export default function Home() {
         {list
           ? `${(list.total || list.rows.length).toLocaleString()} devices · ${new Date().toLocaleDateString()} · source: EUDAMED public API`
           : "Enter an EMDN / CND code and press Search · source: EUDAMED public API"}
-        {loading &&
-          ` · loading device list ${list!.rows.length}/${list!.total || "…"} (EUDAMED takes ~30s per 100)`}
+        {loading && list!.rows.length > 0 && (
+          <>
+            {" · "}
+            <Spinner />
+            {`loading device list ${list!.rows.length}/${list!.total || "…"} (EUDAMED takes ~30s per 100)`}
+          </>
+        )}
       </p>
 
       {error && <p className="pdf-error">Error: {error}</p>}
@@ -432,7 +461,13 @@ export default function Home() {
         </div>
       )}
       {list && list.rows.length === 0 && loading && (
-        <p className="pdf-subtitle">Fetching the device list from EUDAMED… the first page takes about 30 seconds.</p>
+        <>
+          <p className="pdf-subtitle" role="status">
+            <Spinner />
+            Fetching the device list from EUDAMED… the first page takes about 30 seconds.
+          </p>
+          <ListSkeleton />
+        </>
       )}
 
       {list && list.rows.length > 0 && (
@@ -462,8 +497,13 @@ export default function Home() {
             />
             <span className="pdf-muted">
               {shown.length.toLocaleString()} shown
-              {pendingOnPage > 0 &&
-                ` · loading details ${visible.length - pendingOnPage}/${visible.length} (EUDAMED allows ~20 lookups a minute)`}
+              {pendingOnPage > 0 && (
+                <>
+                  {" · "}
+                  <Spinner />
+                  {`loading details ${visible.length - pendingOnPage}/${visible.length} (EUDAMED allows ~20 lookups a minute)`}
+                </>
+              )}
               {failedOnPage.length > 0 && pendingOnPage === 0 && (
                 <>
                   {` · details failed for ${failedOnPage.length} `}
@@ -505,8 +545,18 @@ export default function Home() {
                         <span className="pdf-failed" title="Device details could not be loaded from EUDAMED">
                           {c} ⚠
                         </span>
+                      ) : j === SOURCE_COL ? (
+                        <a
+                          href={c}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="pdf-link"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          EUDAMED ↗
+                        </a>
                       ) : !c && r.detail === "pending" && DETAIL_COLS.has(j) ? (
-                        <span className="pdf-muted">…</span>
+                        <span className="skel" aria-label="Loading" />
                       ) : (
                         c
                       )}
@@ -524,7 +574,61 @@ export default function Home() {
         </>
       )}
 
-      {openUuid && <DeviceSheet uuid={openUuid} onClose={() => setOpenUuid(null)} />}
+      {openUuid && (
+        <DeviceSheet uuid={openUuid} basicUdi={openRow?.basicUdi} onClose={() => setOpenUuid(null)} />
+      )}
+    </div>
+  );
+}
+
+function Spinner({ light }: { light?: boolean }) {
+  return <span className={`spinner${light ? " light" : ""}`} aria-hidden="true" />;
+}
+
+// Placeholder for the overview and table while the first list page loads.
+function ListSkeleton() {
+  return (
+    <div aria-hidden="true">
+      <section className="ov">
+        <div className="ov-kpis">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="ov-kpi">
+              <span className="skel skel-kpi" />
+              <span className="skel skel-line" style={{ width: "55%" }} />
+            </div>
+          ))}
+        </div>
+        <div className="ov-charts">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="ov-card">
+              <span className="skel skel-line" style={{ width: "40%" }} />
+              {[90, 70, 55, 40, 30].map((w) => (
+                <span key={w} className="skel skel-line" style={{ width: `${w}%` }} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </section>
+      <table className="pdf-table">
+        <thead>
+          <tr>
+            {HEADERS.map((h) => (
+              <th key={h}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: 12 }, (_, i) => (
+            <tr key={i}>
+              {HEADERS.map((h, j) => (
+                <td key={h}>
+                  <span className="skel" style={{ width: `${40 + ((i * 7 + j * 13) % 50)}%` }} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
