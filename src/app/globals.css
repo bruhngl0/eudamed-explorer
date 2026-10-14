@@ -112,7 +112,7 @@ body {
 .pdf-table td:nth-child(7),
 .pdf-table td:nth-child(11),
 .pdf-table td:nth-child(13),
-.pdf-table td:nth-child(16) {
+.pdf-table td:nth-child(18) {
   white-space: nowrap;
 }
 .pdf-progress {

@@ -19,6 +19,8 @@ export interface ExportRow {
   reference: string | null;
   additionalDescription: string | null;
   marketDistribution: string | null;
+  nbId: string | null;
+  nbName: string | null;
 }
 
 const d = (v: string | null) => (v && v.trim() ? v : "");
@@ -39,6 +41,8 @@ export const HEADERS = [
   "Reference",
   "Additional product description",
   "Market distribution",
+  "NB ID",
+  "NB name",
   "Source",
 ];
 
@@ -62,6 +66,8 @@ export function toCells(r: ExportRow, i: number): string[] {
     d(r.reference),
     d(r.additionalDescription),
     d(r.marketDistribution),
+    d(r.nbId),
+    d(r.nbName),
     sourceUrl(r.uuid),
   ];
 }
@@ -88,6 +94,8 @@ export function exportXlsx(rows: ExportRow[], code: string) {
     { wch: 12 },
     { wch: 16 },
     { wch: 40 },
+    { wch: 30 },
+    { wch: 10 },
     { wch: 30 },
     { wch: 70 },
   ];

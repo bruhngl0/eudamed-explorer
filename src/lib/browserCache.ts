@@ -5,7 +5,7 @@
 const LIST_TTL = 3_600_000; // 1h
 const DETAIL_TTL = 24 * 3_600_000;
 const LIST_PREFIX = "eud:list:";
-const DETAILS_KEY = "eud:details";
+const DETAILS_KEY = "eud:details:v2"; // bump when detail fields change
 
 function read<T>(key: string): T | null {
   try {

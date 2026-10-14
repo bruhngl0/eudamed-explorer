@@ -86,6 +86,7 @@ export function DeviceSheet({
   const markets = ((u.marketInfoLink?.msWhereAvailable ?? []) as any[])
     .map((m) => m?.country?.name)
     .filter(Boolean);
+  const certs = ((b.deviceCertificateInfoList ?? []) as any[]).filter(Boolean);
   const flags = FLAGS.filter(([k]) => b[k] === true || u[k] === true).map(([, l]) => l);
 
   return (
@@ -176,6 +177,22 @@ export function DeviceSheet({
                   ]}
                 />
               </Block>
+
+              {certs.length > 0 && (
+                <Block title="Certificates">
+                  {certs.map((c, i) => (
+                    <Fields
+                      key={c.uuid ?? i}
+                      items={[
+                        ["NB ID", c.notifiedBody?.srn],
+                        ["NB name", c.notifiedBody?.name],
+                        ["Certificate no.", c.certificateNumber],
+                        ["Expires", date(c.certificateExpiry)],
+                      ]}
+                    />
+                  ))}
+                </Block>
+              )}
 
               <Block title="Manufacturer">
                 <Fields

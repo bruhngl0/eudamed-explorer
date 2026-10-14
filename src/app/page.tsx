@@ -29,6 +29,8 @@ interface Row {
   reference: string | null;
   additionalDescription: string | null;
   marketDistribution: string | null;
+  nbId: string | null;
+  nbName: string | null;
   detail?: "pending" | "done" | "failed";
 }
 
@@ -55,7 +57,7 @@ const STATUSES = [
 const DEFAULT_CODE = "W0105090601";
 
 // Table columns (toCells order) that come from the detail lookups.
-const DETAIL_COLS = new Set([2, 3, 11, 13, 14]);
+const DETAIL_COLS = new Set([2, 3, 11, 13, 14, 15, 16]);
 const PAGE_SIZE = 25;
 const LIST_PAGE = 100; // EUDAMED list page size; ~20-40s each
 const LIST_CAP = 1000; // stop loading the list beyond this many devices
@@ -75,6 +77,8 @@ function applyDetail(r: Row, e: Detail | undefined, pending: boolean): Row {
       e.authorisedRepresentativeCountry ?? r.authorisedRepresentativeCountry,
     additionalDescription: e.additionalDescription ?? null,
     marketDistribution: e.marketDistribution ?? null,
+    nbId: e.nbId ?? null,
+    nbName: e.nbName ?? null,
     detail: e.failed ? "failed" : "done",
   };
 }
@@ -243,6 +247,8 @@ export default function Home() {
             r.reference,
             r.additionalDescription,
             r.marketDistribution,
+            r.nbId,
+            r.nbName,
           ]
             .join(" ")
             .toLowerCase()
@@ -289,14 +295,15 @@ export default function Home() {
     const fresh = (rows: Row[]) => rows.filter((r) => !details[r.uuid] && !requested.has(r.uuid));
     let need = fresh(visible);
     // Nothing waiting: look up the next page too, so paging forward is instant.
-    if (need.length === 0 && queue.current.length === 0 && !working.current)
+    // Not while the list is still loading: lookups slow the remaining pages.
+    if (need.length === 0 && queue.current.length === 0 && !working.current && !list?.loading)
       need = fresh(shown.slice((pageNow + 1) * PAGE_SIZE, (pageNow + 2) * PAGE_SIZE));
     if (need.length === 0) return;
     setRequested((s) => new Set([...s, ...need.map((r) => r.uuid)]));
     const ids = new Set(need.map((r) => r.uuid));
     queue.current = [...need, ...queue.current.filter((r) => !ids.has(r.uuid))];
     pump();
-  }, [visible, shown, pageNow, details, requested, pump]);
+  }, [visible, shown, pageNow, details, requested, pump, list?.loading]);
 
   const pendingOnPage = visible.filter((r) => r.detail === "pending").length;
   const failedOnPage = visible.filter((r) => r.detail === "failed");
@@ -365,6 +372,11 @@ export default function Home() {
   );
 
   const loading = list?.loading ?? false;
+  const exportHint = loading
+    ? "Available once the whole device list has loaded, so the export is complete"
+    : !shown.length
+      ? "Run a search first"
+      : undefined;
   const openRow = openUuid ? merged.find((r) => r.uuid === openUuid) : undefined;
   const activeFacets = Object.entries(facets) as [FacetKey, string][];
 
@@ -426,10 +438,11 @@ export default function Home() {
           </>
         ) : (
           <>
-            <button type="button" onClick={() => runExport("xlsx")} disabled={!shown.length || loading}>
+            {loading && <span className="pdf-muted">Export unlocks when the whole list has loaded</span>}
+            <button type="button" onClick={() => runExport("xlsx")} disabled={!shown.length || loading} title={exportHint}>
               Export XLSX
             </button>
-            <button type="button" onClick={() => runExport("pdf")} disabled={!shown.length || loading}>
+            <button type="button" onClick={() => runExport("pdf")} disabled={!shown.length || loading} title={exportHint}>
               Export PDF
             </button>
           </>

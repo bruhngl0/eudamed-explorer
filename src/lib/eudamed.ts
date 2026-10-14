@@ -169,6 +169,8 @@ export interface Enrichment {
   authorisedRepresentativeCountry: string | null;
   additionalDescription: string | null;
   marketDistribution: string | null;
+  nbId: string | null;
+  nbName: string | null;
   failed: boolean; // a detail lookup failed; fields above may be missing
 }
 
@@ -187,7 +189,21 @@ function marketDistribution(udi: any): string | null {
   return names.length ? [...new Set(names)].sort().join(", ") : null;
 }
 
-// Basic UDI holds name/model/criterion/AR country and is shared by every pack
+// Notified bodies named on the device's certificates: NB number and name.
+function notifiedBodies(basic: any): { nbId: string | null; nbName: string | null } {
+  const nbs = new Map<string, string>();
+  for (const c of (basic?.deviceCertificateInfoList ?? []) as any[]) {
+    const nb = c?.notifiedBody;
+    if (nb?.srn || nb?.name) nbs.set(nb.srn ?? nb.name, nb.name ?? "");
+  }
+  if (nbs.size === 0) return { nbId: null, nbName: null };
+  return {
+    nbId: [...nbs.keys()].join("; "),
+    nbName: [...nbs.values()].filter(Boolean).join("; ") || null,
+  };
+}
+
+// Basic UDI holds name/model/criterion/AR country/certificates and is shared by every pack
 // size (UDI-DI) under it, so it is cached by Basic UDI. The UDI-DI record holds
 // the additional product description and the market distribution.
 export async function enrich(uuid: string, basicUdi?: string | null): Promise<Enrichment> {
@@ -207,6 +223,7 @@ export async function enrich(uuid: string, basicUdi?: string | null): Promise<En
       b?.authorisedRepresentative?.countryName ?? null,
     additionalDescription: pickText(u?.additionalDescription),
     marketDistribution: marketDistribution(u),
+    ...notifiedBodies(b),
     failed: b === undefined || u === undefined,
   };
 }
@@ -229,6 +246,8 @@ export interface EnrichedRow {
   reference: string | null;
   additionalDescription: string | null;
   marketDistribution: string | null;
+  nbId: string | null;
+  nbName: string | null;
 }
 
 // Run an async mapper over items with a bounded number of concurrent calls.
@@ -270,6 +289,8 @@ export function mapListRow(r: ListRow): EnrichedRow {
     reference: r.reference ?? null,
     additionalDescription: null,
     marketDistribution: null,
+    nbId: null,
+    nbName: null,
   };
 }
 
