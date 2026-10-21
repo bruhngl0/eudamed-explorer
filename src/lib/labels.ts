@@ -29,6 +29,7 @@ export function statusLabel(code: string | null): string {
   const k = code.split(".").pop() || code;
   const map: Record<string, string> = {
     "on-the-market": "On the market",
+    "no-longer-on-the-market": "No longer on the market",
     "not-marketed": "No longer on the market",
     "not-intended": "Not intended for EU market",
     recalled: "Recalled",

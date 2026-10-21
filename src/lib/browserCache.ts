@@ -34,6 +34,8 @@ export function loadList<R>(code: string, status: string): { rows: R[]; total: n
 }
 
 export function saveList(code: string, status: string, rows: unknown[], total: number) {
+  // Never remember "no results"; an empty answer may be a one-off EUDAMED hiccup.
+  if (!rows.length) return;
   write(`${LIST_PREFIX}${code}|${status}`, { at: Date.now(), rows, total });
 }
 

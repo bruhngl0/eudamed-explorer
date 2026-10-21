@@ -69,12 +69,24 @@ export const queueLength = () => waiters.length;
 const MAX_ENTRIES = 20_000;
 const cache = new Map<string, { at: number; v: Promise<any> }>();
 
-function cached<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
+function cached<T>(
+  key: string,
+  ttlMs: number,
+  load: () => Promise<T>,
+  keep: (v: T) => boolean = () => true,
+): Promise<T> {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < ttlMs) return hit.v;
   const v = load();
-  cache.set(key, { at: Date.now(), v });
-  v.catch(() => cache.delete(key));
+  const entry = { at: Date.now(), v };
+  cache.set(key, entry);
+  // Drop failures and answers we don't trust, so the next request asks EUDAMED again.
+  const drop = () => {
+    if (cache.get(key) === entry) cache.delete(key);
+  };
+  v.then((r) => {
+    if (!keep(r)) drop();
+  }, drop);
   if (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value!);
   return v;
 }
@@ -156,8 +168,13 @@ export async function search(p: SearchParams): Promise<SearchResult> {
   if (p.deviceStatusCode) q.set("deviceStatusCode", p.deviceStatusCode);
   const url = `${BASE}/devices/udiDiData?${q.toString()}`;
   // EUDAMED takes ~30s per search page, so give it room.
-  return cached(url, HOUR, () =>
-    getJson<SearchResult>(url, { high: true, timeoutMs: 100_000, tries: 2 }),
+  // An empty page is not cached: EUDAMED sometimes returns one by mistake,
+  // and keeping it would hide real results for an hour.
+  return cached(
+    url,
+    HOUR,
+    () => getJson<SearchResult>(url, { high: true, timeoutMs: 100_000, tries: 2 }),
+    (r) => (r.content?.length ?? 0) > 0,
   );
 }
 

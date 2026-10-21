@@ -51,7 +51,7 @@ interface ExportProgress {
 
 const STATUSES = [
   { value: "refdata.device-model-status.on-the-market", label: "On the market" },
-  { value: "refdata.device-model-status.not-marketed", label: "No longer on market" },
+  { value: "refdata.device-model-status.no-longer-on-the-market", label: "No longer on market" },
   { value: "all", label: "All statuses" },
 ];
 const DEFAULT_CODE = "W0105090601";
