@@ -161,6 +161,8 @@ export default function Home() {
   const [openUuid, setOpenUuid] = useState<string | null>(null);
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const exportCancel = useRef(false);
+  // Quick export: skip the detail lookups, so it's done in seconds.
+  const [quick, setQuick] = useState(false);
   const searchGen = useRef(0);
 
   // ---- Device list: every page, 100 at a time ------------------------------
@@ -363,6 +365,19 @@ export default function Home() {
       exportCancel.current = false;
       setError(null);
       setNotice(null);
+      const name = query.code + (Object.keys(facets).length ? "_filtered" : "");
+      if (quick) {
+        // Details already looked up still fill in; the rest stay blank.
+        const rows = shown.map((r) => applyDetail(r, details[r.uuid], false));
+        if (kind === "xlsx") exportXlsx(rows, `${name}_quick`);
+        else exportPdf(rows, `${name}_quick`);
+        const blank = shown.filter((r) => !details[r.uuid] || details[r.uuid].failed).length;
+        if (blank)
+          setNotice(
+            `Quick export of ${rows.length} devices: device name, model, criterion, description, market distribution and notified body are blank for ${blank} not looked up yet.`,
+          );
+        return;
+      }
       const local: Record<string, Detail> = { ...details };
       const need = shown.filter((r) => !local[r.uuid] || local[r.uuid].failed);
       let done = shown.length - need.length;
@@ -381,7 +396,6 @@ export default function Home() {
         );
         if (exportCancel.current) return;
         const rows = shown.map((r) => applyDetail(r, local[r.uuid], false));
-        const name = query.code + (Object.keys(facets).length ? "_filtered" : "");
         if (kind === "xlsx") exportXlsx(rows, name);
         else exportPdf(rows, name);
         const failed = rows.filter((r) => r.detail === "failed").length;
@@ -393,7 +407,7 @@ export default function Home() {
         setExportProgress(null);
       }
     },
-    [query, shown, details, facets],
+    [query, shown, details, facets, quick],
   );
 
   const loading = list?.loading ?? false;
@@ -466,6 +480,13 @@ export default function Home() {
         ) : (
           <>
             {loading && <span className="pdf-muted">Export unlocks when the whole list has loaded</span>}
+            <label
+              className="pdf-muted quick-toggle"
+              title="Export in seconds without looking up device details; those columns stay blank unless already loaded"
+            >
+              <input type="checkbox" checked={quick} onChange={(e) => setQuick(e.target.checked)} />
+              Quick (no details)
+            </label>
             <button type="button" onClick={() => runExport("xlsx")} disabled={!shown.length || loading} title={exportHint}>
               Export XLSX
             </button>
@@ -500,7 +521,7 @@ export default function Home() {
           </button>{" "}
           <span className="pdf-muted">
             — takes about {duration((missing / LIST_PAGE) * 30)} to load the rest; exporting with details can
-            then take up to {duration((list!.total / 18) * 60)} the first time.
+            then take up to {duration((list!.total / 18) * 60)} the first time (a quick export takes seconds).
           </span>
         </p>
       )}
