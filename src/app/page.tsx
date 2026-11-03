@@ -60,11 +60,20 @@ const DEFAULT_CODE = "W0105090601";
 const DETAIL_COLS = new Set([2, 3, 11, 13, 14, 15, 16]);
 const PAGE_SIZE = 25;
 const LIST_PAGE = 100; // EUDAMED list page size; ~20-40s each
-const LIST_CAP = 1000; // stop loading the list beyond this many devices
+const LIST_CAP = 5000; // stop loading the list beyond this many devices ("Load all" goes on)
+// Bigger lists aren't saved in the browser: ~65 KB per 100 rows would overflow
+// localStorage and wipe the saved details. The server keeps the pages for 1h.
+const SAVE_CAP = 1000;
 // EUDAMED allows ~20 requests a minute, so details trickle in; asking for a
 // few devices per request lets each batch show up as soon as it is ready.
 const PAGE_BATCH = 3;
 const EXPORT_BATCH = 5;
+
+// Rough wait time for the "Load all" warning, e.g. "25 min" or "3 h".
+function duration(seconds: number) {
+  const min = Math.max(1, Math.ceil(seconds / 60));
+  return min < 90 ? `${min} min` : `${Math.round(min / 60)} h`;
+}
 
 function applyDetail(r: Row, e: Detail | undefined, pending: boolean): Row {
   if (!e) return pending ? { ...r, detail: "pending" } : r;
@@ -155,6 +164,44 @@ export default function Home() {
   const searchGen = useRef(0);
 
   // ---- Device list: every page, 100 at a time ------------------------------
+  // Fetch list pages, starting after the rows already loaded, until `cap` rows
+  // (Infinity = all of them). Used by a search and by "Load all".
+  const loadPages = useCallback(async (gen: number, code: string, st: string, start: Row[], cap: number) => {
+    const rows = [...start];
+    const seen = new Set(rows.map((r) => r.uuid));
+    let total = 0;
+    try {
+      for (let p = Math.floor(rows.length / LIST_PAGE); ; p++) {
+        const q = new URLSearchParams({
+          cndCode: code,
+          status: st,
+          page: String(p),
+          pageSize: String(LIST_PAGE),
+        });
+        const res = await fetch(`/api/search?${q}`);
+        const json = await res.json();
+        if (gen !== searchGen.current) return;
+        if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+        total = json.totalElements;
+        for (const r of json.rows as Row[]) {
+          if (seen.has(r.uuid)) continue;
+          seen.add(r.uuid);
+          rows.push(r);
+        }
+        const done = json.rows.length === 0 || rows.length >= json.totalElements || rows.length >= cap;
+        setList({ rows: [...rows], total: json.totalElements, loading: !done });
+        if (done) {
+          if (rows.length <= SAVE_CAP) saveList(code, st, rows, json.totalElements);
+          return;
+        }
+      }
+    } catch (e) {
+      if (gen !== searchGen.current) return;
+      setError((e as Error).message);
+      setList(rows.length ? { rows, total: Math.max(total, rows.length), loading: false } : null);
+    }
+  }, []);
+
   const runSearch = useCallback(async (code: string, st: string, keepFacets?: Facets) => {
     const gen = ++searchGen.current;
     setQuery({ code, status: st });
@@ -166,45 +213,23 @@ export default function Home() {
     setPage(0);
     setList({ rows: [], total: 0, loading: true });
     writeUrl(code, st, keepFacets ?? {});
-    const capNotice = (shownCount: number, total: number) => {
-      if (total > shownCount)
-        setNotice(`Showing the first ${shownCount.toLocaleString()} of ${total.toLocaleString()} devices.`);
-    };
     // Seen in this browser within the hour: show it without asking EUDAMED.
     const hit = loadList<Row>(code, st);
     if (hit) {
       setList({ rows: hit.rows, total: hit.total, loading: false });
-      capNotice(hit.rows.length, hit.total);
       return;
     }
-    const rows: Row[] = [];
-    try {
-      for (let p = 0; ; p++) {
-        const q = new URLSearchParams({
-          cndCode: code,
-          status: st,
-          page: String(p),
-          pageSize: String(LIST_PAGE),
-        });
-        const res = await fetch(`/api/search?${q}`);
-        const json = await res.json();
-        if (gen !== searchGen.current) return;
-        if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-        rows.push(...json.rows);
-        const done = json.rows.length === 0 || rows.length >= json.totalElements || rows.length >= LIST_CAP;
-        setList({ rows: [...rows], total: json.totalElements, loading: !done });
-        if (done) {
-          capNotice(rows.length, json.totalElements);
-          saveList(code, st, rows, json.totalElements);
-          return;
-        }
-      }
-    } catch (e) {
-      if (gen !== searchGen.current) return;
-      setError((e as Error).message);
-      setList(rows.length ? { rows, total: rows.length, loading: false } : null);
-    }
-  }, []);
+    await loadPages(gen, code, st, [], LIST_CAP);
+  }, [loadPages]);
+
+  // "Load all": keep going past the first LIST_CAP devices. Filters stay.
+  const loadAll = () => {
+    if (!query || !list) return;
+    setError(null);
+    setNotice(null);
+    setList({ ...list, loading: true });
+    loadPages(searchGen.current, query.code, query.status, list.rows, Infinity);
+  };
 
   // Open a shared link on first load, with details this browser already has.
   useEffect(() => {
@@ -372,6 +397,8 @@ export default function Home() {
   );
 
   const loading = list?.loading ?? false;
+  // The list stopped at LIST_CAP (or an error) with more devices in EUDAMED.
+  const missing = list && !loading ? list.total - list.rows.length : 0;
   const exportHint = loading
     ? "Available once the whole device list has loaded, so the export is complete"
     : !shown.length
@@ -465,6 +492,18 @@ export default function Home() {
 
       {error && <p className="pdf-error">Error: {error}</p>}
       {notice && <p className="pdf-subtitle">{notice}</p>}
+      {missing > 0 && !exportProgress && (
+        <p className="pdf-subtitle">
+          Showing the first {list!.rows.length.toLocaleString()} of {list!.total.toLocaleString()} devices.{" "}
+          <button type="button" className="pdf-link" onClick={loadAll}>
+            Load all {list!.total.toLocaleString()}
+          </button>{" "}
+          <span className="pdf-muted">
+            — takes about {duration((missing / LIST_PAGE) * 30)} to load the rest; exporting with details can
+            then take up to {duration((list!.total / 18) * 60)} the first time.
+          </span>
+        </p>
+      )}
       {!list && !error && (
         <div className="empty">
           <p>Search EU medical-device registrations by EMDN code.</p>
